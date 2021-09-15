@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <set>
+#include <string>
 #include <tuple>
 #include <utility>
 
@@ -100,8 +101,7 @@ std::string enum_to_string<achievement_comparison>( achievement_comparison data 
         case achievement_comparison::last:
             break;
     }
-    debugmsg( "Invalid achievement_comparison" );
-    abort();
+    cata_fatal( "Invalid achievement_comparison" );
 }
 
 template<>
@@ -115,8 +115,7 @@ std::string enum_to_string<achievement::time_bound::epoch>( achievement::time_bo
         case achievement::time_bound::epoch::last:
             break;
     }
-    debugmsg( "Invalid epoch" );
-    abort();
+    cata_fatal( "Invalid epoch" );
 }
 
 template<>
@@ -132,8 +131,7 @@ std::string enum_to_string<requirement_visibility>( requirement_visibility data 
         case requirement_visibility::last:
             break;
     }
-    debugmsg( "Invalid requirement_visibility" );
-    abort();
+    cata_fatal( "Invalid requirement_visibility" );
 }
 
 } // namespace io
@@ -150,8 +148,7 @@ static nc_color color_from_completion( bool is_conduct, achievement_completion c
         case achievement_completion::last:
             break;
     }
-    debugmsg( "Invalid achievement_completion" );
-    abort();
+    cata_fatal( "Invalid achievement_completion" );
 }
 
 struct achievement_requirement {
@@ -161,10 +158,9 @@ struct achievement_requirement {
     requirement_visibility visibility = requirement_visibility::always;
     cata::optional<translation> description;
 
-    bool becomes_false = false;
+    bool becomes_false = false; // NOLINT(cata-serialize)
 
-    void deserialize( JsonIn &jin ) {
-        const JsonObject &jo = jin.get_object();
+    void deserialize( const JsonObject &jo ) {
         if( !( jo.read( "event_statistic", statistic ) &&
                jo.read( "is", comparison ) &&
                ( comparison == achievement_comparison::anything ||
@@ -193,8 +189,7 @@ struct achievement_requirement {
             case achievement_comparison::last:
                 break;
         }
-        debugmsg( "Invalid achievement_comparison" );
-        abort();
+        cata_fatal( "Invalid achievement_comparison" );
     }
 
     void check( const achievement_id &id ) const {
@@ -217,7 +212,7 @@ struct achievement_requirement {
         }
     }
 
-    bool satisifed_by( const cata_variant &v ) const {
+    bool satisfied_by( const cata_variant &v ) const {
         switch( comparison ) {
             case achievement_comparison::equal:
                 return v == target;
@@ -230,8 +225,7 @@ struct achievement_requirement {
             case achievement_comparison::last:
                 break;
         }
-        debugmsg( "Invalid achievement_requirement comparison value" );
-        abort();
+        cata_fatal( "Invalid achievement_requirement comparison value" );
     }
 
     bool is_visible( achievement_completion ach_completed, bool req_completed ) const {
@@ -247,8 +241,7 @@ struct achievement_requirement {
             case requirement_visibility::last:
                 break;
         }
-        debugmsg( "Invalid requirement_visibility value" );
-        abort();
+        cata_fatal( "Invalid requirement_visibility value" );
     }
 };
 
@@ -262,17 +255,15 @@ static time_point epoch_to_time_point( achievement::time_bound::epoch e )
         case achievement::time_bound::epoch::last:
             break;
     }
-    debugmsg( "Invalid epoch" );
-    abort();
+    cata_fatal( "Invalid epoch" );
 }
 
-void achievement::time_bound::deserialize( JsonIn &jin )
+void achievement::time_bound::deserialize( const JsonObject &jo )
 {
-    const JsonObject &jo = jin.get_object();
     if( !( jo.read( "since", epoch_ ) &&
            jo.read( "is", comparison_ ) &&
            jo.read( "target", period_ ) ) ) {
-        jo.throw_error( "Mandatory field missing for achievement time_constaint" );
+        jo.throw_error( "Mandatory field missing for achievement time_constraint" );
     }
 }
 
@@ -318,8 +309,7 @@ achievement_completion achievement::time_bound::completed() const
         case achievement_comparison::last:
             break;
     }
-    debugmsg( "Invalid achievement_comparison" );
-    abort();
+    cata_fatal( "Invalid achievement_comparison" );
 }
 
 bool achievement::time_bound::becomes_false() const
@@ -336,8 +326,7 @@ bool achievement::time_bound::becomes_false() const
         case achievement_comparison::last:
             break;
     }
-    debugmsg( "Invalid achievement_comparison" );
-    abort();
+    cata_fatal( "Invalid achievement_comparison" );
 }
 
 std::string achievement::time_bound::ui_text( bool is_conduct ) const
@@ -356,8 +345,7 @@ std::string achievement::time_bound::ui_text( bool is_conduct ) const
             case epoch::last:
                 break;
         }
-        debugmsg( "Invalid epoch" );
-        abort();
+        cata_fatal( "Invalid epoch" );
     };
 
     std::string message = [&]() {
@@ -383,16 +371,14 @@ std::string achievement::time_bound::ui_text( bool is_conduct ) const
                     case achievement_comparison::last:
                         break;
                 }
-                debugmsg( "Invalid achievement_comparison" );
-                abort();
+                cata_fatal( "Invalid achievement_comparison" );
             case achievement_completion::failed:
                 return string_format( _( "Within %s of %s (passed)" ),
                                       to_string( period_ ), translate_epoch( epoch_ ) );
             case achievement_completion::last:
                 break;
         }
-        debugmsg( "Invalid achievement_completion" );
-        abort();
+        cata_fatal( "Invalid achievement_completion" );
     }
     ();
 
@@ -480,7 +466,7 @@ static cata::optional<std::string> text_for_requirement(
     const cata_variant &current_value,
     achievement_completion ach_completed )
 {
-    bool is_satisfied = req.satisifed_by( current_value );
+    bool is_satisfied = req.satisfied_by( current_value );
     if( !req.is_visible( ach_completed, is_satisfied ) ) {
         return cata::nullopt;
     }
@@ -527,10 +513,9 @@ class requirement_watcher : stat_watcher
     public:
         requirement_watcher( achievement_tracker &tracker, const achievement_requirement &req,
                              stats_tracker &stats ) :
-            current_value_( req.statistic->value( stats ) ),
             tracker_( &tracker ),
-            requirement_( &req ) {
-            stats.add_watcher( req.statistic, this );
+            requirement_( &req ),
+            current_value_( stats.add_watcher( req.statistic, this ) ) {
         }
 
         const cata_variant &current_value() const {
@@ -543,8 +528,8 @@ class requirement_watcher : stat_watcher
 
         void new_value( const cata_variant &new_value, stats_tracker & ) override;
 
-        bool is_satisfied( stats_tracker &stats ) {
-            return requirement_->satisifed_by( requirement_->statistic->value( stats ) );
+        bool is_satisfied( stats_tracker &/*stats*/ ) {
+            return requirement_->satisfied_by( current_value_ );
         }
 
         cata::optional<std::string> ui_text() const {
@@ -552,9 +537,9 @@ class requirement_watcher : stat_watcher
                                          achievement_completion::pending );
         }
     private:
-        cata_variant current_value_;
         achievement_tracker *tracker_;
         const achievement_requirement *requirement_;
+        cata_variant current_value_;
 };
 
 void requirement_watcher::new_value( const cata_variant &new_value, stats_tracker & )
@@ -564,7 +549,7 @@ void requirement_watcher::new_value( const cata_variant &new_value, stats_tracke
     }
     // set_requirement can result in this being deleted, so it must be the last
     // thing in this function
-    tracker_->set_requirement( this, requirement_->satisifed_by( current_value_ ) );
+    tracker_->set_requirement( this, requirement_->satisfied_by( current_value_ ) );
 }
 
 namespace io
@@ -581,8 +566,7 @@ std::string enum_to_string<achievement_completion>( achievement_completion data 
         case achievement_completion::last:
             break;
     }
-    debugmsg( "Invalid achievement_completion" );
-    abort();
+    cata_fatal( "Invalid achievement_completion" );
 }
 
 } // namespace io
@@ -615,7 +599,7 @@ std::string achievement_state::ui_text( const achievement *ach ) const
     // Next: the requirements
     const std::vector<achievement_requirement> &reqs = ach->requirements();
     // If these two vectors are of different sizes then the definition must
-    // have changed since it was complated / failed, so we don't print any
+    // have changed since it was completed / failed, so we don't print any
     // requirements info.
     std::vector<cata::optional<std::string>> req_texts;
     if( final_values.size() == reqs.size() ) {
@@ -637,9 +621,8 @@ void achievement_state::serialize( JsonOut &jsout ) const
     jsout.end_object();
 }
 
-void achievement_state::deserialize( JsonIn &jsin )
+void achievement_state::deserialize( const JsonObject &jo )
 {
-    JsonObject jo = jsin.get_object();
     jo.read( "completion", completion );
     jo.read( "last_state_change", last_state_change );
     jo.read( "final_values", final_values );
@@ -712,7 +695,7 @@ std::string achievement_tracker::ui_text() const
             achievement_completion::failed,
             achievement_->time_constraint()->target(),
             current_values()
-        }. ui_text( achievement_ );
+        } .ui_text( achievement_ );
     }
 
     // First: the achievement name and description
@@ -879,9 +862,8 @@ void achievements_tracker::serialize( JsonOut &jsout ) const
     jsout.end_object();
 }
 
-void achievements_tracker::deserialize( JsonIn &jsin )
+void achievements_tracker::deserialize( const JsonObject &jo )
 {
-    JsonObject jo = jsin.get_object();
     if( !jo.read( "enabled", enabled_ ) ) {
         enabled_ = true;
     }

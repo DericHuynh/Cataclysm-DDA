@@ -2,15 +2,16 @@
 #ifndef CATA_SRC_KILL_TRACKER_H
 #define CATA_SRC_KILL_TRACKER_H
 
+#include <iosfwd>
 #include <map>
-#include <string>
 #include <vector>
 
 #include "event_subscriber.h"
 #include "type_id.h"
 
-class JsonIn;
+class JsonObject;
 class JsonOut;
+
 namespace cata
 {
 class event;
@@ -38,7 +39,7 @@ class kill_tracker : public event_subscriber
         void notify( const cata::event & ) override;
 
         void serialize( JsonOut & ) const;
-        void deserialize( JsonIn & );
+        void deserialize( const JsonObject &data );
     private:
         std::map<mtype_id, int> kills;         // Player's kill count
         std::vector<std::string> npc_kills;    // names of NPCs the player killed

@@ -2,24 +2,27 @@
 
 #include <algorithm>
 #include <climits>
+#include <functional>
 #include <iosfwd>
 #include <iterator>
+#include <new>
 #include <string>
 #include <tuple>
+#include <type_traits>
 
 #include "cata_utility.h"
 #include "character.h"
+#include "colony.h"
 #include "construction.h"
 #include "construction_group.h"
 #include "cursesdef.h"
 #include "debug.h"
 #include "faction.h"
-#include "game.h"
 #include "generic_factory.h"
 #include "iexamine.h"
-#include "int_id.h"
 #include "item.h"
 #include "item_category.h"
+#include "item_pocket.h"
 #include "item_search.h"
 #include "itype.h"
 #include "json.h"
@@ -36,28 +39,13 @@
 #include "ui.h"
 #include "value_ptr.h"
 #include "vehicle.h"
+#include "visitable.h"
 #include "vpart_position.h"
 
 static const item_category_id item_category_food( "food" );
 
 zone_manager::zone_manager()
 {
-    types.emplace( zone_type_id( "NO_AUTO_PICKUP" ),
-                   zone_type( to_translation( "No Auto Pickup" ),
-                              to_translation( "You won't auto-pickup items inside the zone." ) ) );
-    types.emplace( zone_type_id( "NO_NPC_PICKUP" ),
-                   zone_type( to_translation( "No NPC Pickup" ),
-                              to_translation( "Friendly NPCs don't pickup items inside the zone." ) ) );
-    types.emplace( zone_type_id( "NPC_RETREAT" ),
-                   zone_type( to_translation( "NPC Retreat" ),
-                              to_translation( "When fleeing, friendly NPCs will attempt to retreat toward this zone if it is within 60 tiles." ) ) );
-    types.emplace( zone_type_id( "NPC_NO_INVESTIGATE" ),
-                   zone_type( to_translation( "NPC Ignore Sounds" ),
-                              to_translation( "Friendly NPCs won't investigate unseen sounds coming from this zone." ) ) );
-    types.emplace( zone_type_id( "NPC_INVESTIGATE_ONLY" ),
-                   zone_type( to_translation( "NPC Investigation Area" ),
-                              to_translation( "Friendly NPCs will investigate unseen sounds only if they come from inside this area." ) ) );
-
     for( const zone_type &zone : zone_type::get_all() ) {
         types.emplace( zone.id, zone );
     }
@@ -103,6 +91,17 @@ zone_manager::zone_manager()
                    zone_type( to_translation( "Auto Drink" ),
                               to_translation( "Items in this zone will be automatically consumed during a long activity if you get thirsty." ) ) );
 
+}
+
+void zone_manager::clear()
+{
+    zones.clear();
+    added_vzones.clear();
+    changed_vzones.clear();
+    removed_vzones.clear();
+    // Do not clear types since it is needed for the next games.
+    area_cache.clear();
+    vzone_cache.clear();
 }
 
 std::string zone_type::name() const
@@ -454,12 +453,22 @@ cata::optional<std::string> zone_manager::query_name( const std::string &default
 cata::optional<zone_type_id> zone_manager::query_type() const
 {
     const auto &types = get_manager().get_types();
+
+    // Copy zone types into an array and sort by name
+    std::vector<std::pair<zone_type_id, zone_type>> types_vec;
+    std::copy( types.begin(), types.end(),
+               std::back_inserter<std::vector<std::pair<zone_type_id, zone_type>>>( types_vec ) );
+    std::sort( types_vec.begin(), types_vec.end(),
+    []( const std::pair<zone_type_id, zone_type> &lhs, const std::pair<zone_type_id, zone_type> &rhs ) {
+        return localized_compare( lhs.second.name(), rhs.second.name() );
+    } );
+
     uilist as_m;
     as_m.desc_enabled = true;
     as_m.text = _( "Select zone type:" );
 
     size_t i = 0;
-    for( const auto &pair : types ) {
+    for( const auto &pair : types_vec ) {
         const auto &type = pair.second;
 
         as_m.addentry_desc( i++, true, MENU_AUTOASSIGN, type.name(), type.desc() );
@@ -471,7 +480,7 @@ cata::optional<zone_type_id> zone_manager::query_type() const
     }
     size_t index = as_m.ret;
 
-    auto iter = types.begin();
+    auto iter = types_vec.begin();
     std::advance( iter, index );
 
     return iter->first;
@@ -627,7 +636,7 @@ std::unordered_set<tripoint> zone_manager::get_point_set_loot( const tripoint &w
 {
     std::unordered_set<tripoint> res;
     map &here = get_map();
-    for( const tripoint elem : here.points_in_radius( here.getlocal( where ), radius ) ) {
+    for( const tripoint &elem : here.points_in_radius( here.getlocal( where ), radius ) ) {
         const zone_data *zone = get_zone_at( here.getabs( elem ) );
         // if not a LOOT zone
         if( ( !zone ) || ( zone->get_type().str().substr( 0, 4 ) != "LOOT" ) ) {
@@ -828,6 +837,11 @@ zone_type_id zone_manager::get_near_zone_type_for_item( const item &it,
             return zone_type_id( "LOOT_CORPSE" );
         }
     }
+    if( it.typeId() == itype_id( "disassembly" ) ) {
+        if( has_near( zone_type_id( "zone_disassemble" ), where, range ) ) {
+            return zone_type_id( "zone_disassemble" );
+        }
+    }
 
     cata::optional<zone_type_id> zone_check_first = cat.priority_zone( it );
     if( zone_check_first && has_near( *zone_check_first, where, range ) ) {
@@ -839,17 +853,40 @@ zone_type_id zone_manager::get_near_zone_type_for_item( const item &it,
     }
 
     if( cat.get_id() == item_category_food ) {
-        // skip food without comestible, like MREs
-        if( const item *it_food = it.get_food() ) {
+        const item *it_food = nullptr;
+        bool perishable = false;
+        // Look for food, and whether any contents which will spoil if left out.
+        // Food crafts and food without comestible, like MREs, will fall down to LOOT_FOOD.
+        it.visit_items( [&it_food, &perishable]( const item * node, const item * parent ) {
+            if( node && node->is_food() ) {
+                it_food = node;
+
+                if( node->goes_bad() ) {
+                    float spoil_multiplier = 1.0f;
+                    if( parent ) {
+                        const item_pocket *parent_pocket = parent->contained_where( *node );
+                        if( parent_pocket ) {
+                            spoil_multiplier = parent_pocket->spoil_multiplier();
+                        }
+                    }
+                    if( spoil_multiplier > 0.0f ) {
+                        perishable = true;
+                    }
+                }
+            }
+            return VisitResponse::NEXT;
+        } );
+
+        if( it_food != nullptr ) {
             if( it_food->get_comestible()->comesttype == "DRINK" ) {
-                if( it_food->goes_bad() && has_near( zone_type_id( "LOOT_PDRINK" ), where, range ) ) {
+                if( perishable && has_near( zone_type_id( "LOOT_PDRINK" ), where, range ) ) {
                     return zone_type_id( "LOOT_PDRINK" );
                 } else if( has_near( zone_type_id( "LOOT_DRINK" ), where, range ) ) {
                     return zone_type_id( "LOOT_DRINK" );
                 }
             }
 
-            if( it_food->goes_bad() && has_near( zone_type_id( "LOOT_PFOOD" ), where, range ) ) {
+            if( perishable && has_near( zone_type_id( "LOOT_PFOOD" ), where, range ) ) {
                 return zone_type_id( "LOOT_PFOOD" );
             }
         }
@@ -1096,9 +1133,9 @@ void zone_manager::serialize( JsonOut &json ) const
     json.write( zones );
 }
 
-void zone_manager::deserialize( JsonIn &jsin )
+void zone_manager::deserialize( const JsonValue &jv )
 {
-    jsin.read( zones );
+    jv.read( zones );
     for( auto it = zones.begin(); it != zones.end(); ++it ) {
         const zone_type_id zone_type = it->get_type();
         if( !has_type( zone_type ) ) {
@@ -1119,13 +1156,13 @@ void zone_data::serialize( JsonOut &json ) const
     json.member( "is_vehicle", is_vehicle );
     json.member( "start", start );
     json.member( "end", end );
-    get_options().serialize( json );
+    options->serialize( json );
     json.end_object();
 }
 
-void zone_data::deserialize( JsonIn &jsin )
+void zone_data::deserialize( const JsonObject &data )
 {
-    JsonObject data = jsin.get_object();
+    data.allow_omitted_members();
     data.read( "name", name );
     data.read( "type", type );
     if( data.has_member( "faction" ) ) {
@@ -1181,7 +1218,7 @@ void zone_manager::load_zones()
 
     read_from_file_optional( savefile, [&]( std::istream & fin ) {
         JsonIn jsin( fin );
-        deserialize( jsin );
+        deserialize( jsin.get_value() );
     } );
     revert_vzones();
     added_vzones.clear();
@@ -1202,7 +1239,7 @@ void zone_manager::zone_edited( zone_data &zone )
             }
         }
         //Add it to the list of changed zones
-        changed_vzones.push_back( std::make_pair( zone_data( zone ), &zone ) );
+        changed_vzones.emplace_back( zone_data( zone ), &zone );
     }
 }
 

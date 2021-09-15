@@ -493,12 +493,12 @@
     "copy-from": "sourdough_starter",
     "looks_like": "sourdough_starter",
     "name": { "str_sp": "Dana's family sourdough starter" },
-    "description": "This crusty old jar has a glow-in-the-dark millennium falcon decal on the side, and a label that reads, \"Landough Calrisean.  Dana's.  Do not touch on pain of death\".  It's been abandoned for some time and doesn't look like it could be readily salvaged as a sourdough culture, but maybe an experienced sourdough baker could manage it."
+    "description": "This crusty old jar has a glow-in-the-dark Millennium Falcon decal on the side, and a label that reads, \"Landough Calrisean.  Dana's.  Do not touch on pain of death\".  It's been abandoned for some time and doesn't look like it could be readily salvaged as a sourdough culture, but maybe an experienced sourdough baker could manage it."
   },
   {
     "type": "COMESTIBLE",
     "id": "Dana_sourdough_bread",
-    "name": "Dana's sourdough bread",
+    "name": { "str": "Dana's sourdough bread" },
     "copy-from": "sourdough_bread",
     "looks_like": "sourdough_bread",
     "description": "This round loaf of bread has a thick, dark crust, and smells very enticing.",

@@ -18,6 +18,7 @@ AMMO_TYPE_WHITELIST = {
     'BB',
     'blunderbuss',
     'bolt',
+    'cannon',
     'charcoal',
     'chemical_spray',
     'fishspear',
@@ -31,6 +32,13 @@ AMMO_TYPE_WHITELIST = {
     'rock',
     'signal_flare',
     'weldgas',
+    'currency',
+    'coin_penny',
+    'coin_nickel',
+    'coin_dime',
+    'coin_quarter',
+    'coin_half_dollar',
+    'coin_dollar',
 }
 SKILL_WHITELIST = {
     'archery',
@@ -41,6 +49,8 @@ SKILL_WHITELIST = {
 ID_WHITELIST = {
     # Guns
     'coilgun',
+    'slamfire_shotgun',
+    'slamfire_shotgun_d',
     'ftk93',
     'l_bak_223',
     'pneumatic_shotgun',
@@ -50,6 +60,7 @@ ID_WHITELIST = {
     'surv_carbine_223',
     # Magazines
     '223_speedloader5',
+    'coin_wrapper',
 }
 
 

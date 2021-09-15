@@ -1,17 +1,28 @@
 #include "map_helpers.h"
 
+#include <functional>
+#include <list>
+#include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "cata_assert.h"
+#include "character.h"
+#include "clzones.h"
+#include "faction.h"
+#include "field.h"
 #include "game.h"
 #include "game_constants.h"
-#include "location.h"
+#include "item.h"
+#include "item_pocket.h"
 #include "map.h"
 #include "map_iterator.h"
 #include "mapdata.h"
 #include "npc.h"
 #include "point.h"
+#include "ret_val.h"
+#include "submap.h"
 #include "type_id.h"
 
 // Remove all vehicles from the map
@@ -20,6 +31,19 @@ void clear_vehicles()
     map &here = get_map();
     for( wrapped_vehicle &veh : here.get_vehicles() ) {
         here.destroy_vehicle( veh.v );
+    }
+}
+
+void clear_radiation()
+{
+    map &here = get_map();
+    const int mapsize = here.getmapsize() * SEEX;
+    for( int z = -1; z <= OVERMAP_HEIGHT; ++z ) {
+        for( int x = 0; x < mapsize; ++x ) {
+            for( int y = 0; y < mapsize; ++y ) {
+                here.set_radiation( { x, y, z}, 0 );
+            }
+        }
     }
 }
 
@@ -63,12 +87,12 @@ void clear_fields( const int zlevel )
     for( int x = 0; x < mapsize; ++x ) {
         for( int y = 0; y < mapsize; ++y ) {
             const tripoint p( x, y, zlevel );
-            std::vector<field_type_id> fields;
-            for( auto &pr : here.field_at( p ) ) {
-                fields.push_back( pr.second.get_field_type() );
-            }
-            for( field_type_id f : fields ) {
-                here.remove_field( p, f );
+            point offset;
+
+            submap *sm = here.get_submap_at( p, offset );
+            if( sm ) {
+                sm->field_count = 0;
+                sm->get_field( offset ).clear();
             }
         }
     }
@@ -85,6 +109,19 @@ void clear_items( const int zlevel )
     }
 }
 
+void clear_zones()
+{
+    zone_manager &zm = zone_manager::get_manager();
+    for( auto zone_ref : zm.get_zones( faction_id( "your_followers" ) ) ) {
+        if( !zone_ref.get().get_is_vehicle() ) {
+            // Trying to delete vehicle zones fails with a message that the zone isn't loaded.
+            // Don't need it right now and the errors spam up the test output, so skip.
+            continue;
+        }
+        zm.remove( zone_ref.get() );
+    }
+}
+
 void clear_map()
 {
     // Clearing all z-levels is rather slow, so just clear the ones I know the
@@ -92,6 +129,7 @@ void clear_map()
     for( int z = -2; z <= 0; ++z ) {
         clear_fields( z );
     }
+    clear_zones();
     wipe_map_terrain();
     clear_npcs();
     clear_creatures();
@@ -105,7 +143,7 @@ void clear_map_and_put_player_underground()
 {
     clear_map();
     // Make sure the player doesn't block the path of the monster being tested.
-    get_player_location().setpos( { 0, 0, -2 } );
+    get_player_character().setpos( { 0, 0, -2 } );
 }
 
 monster &spawn_test_monster( const std::string &monster_type, const tripoint &start )
